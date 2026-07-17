@@ -1,65 +1,100 @@
 import streamlit as st
 import pandas as pd
 import pickle
-import numpy as np
+import os
 
-# Configure the page layout
-st.set_page_config(page_title="Exam Score Predictor", page_icon="🎓", layout="centered")
+# 1. Page Configuration (Must be the first Streamlit command)
+st.set_page_config(page_title="Student Performance Dashboard", page_icon="📈", layout="wide")
 
-# Load the trained KNeighborsRegressor model
+# 2. Load the trained KNeighborsRegressor model
 @st.cache_resource
 def load_model():
-    try:
-        with open('model.pkl', 'rb') as file:
-            model = pickle.load(file)
-        return model
-    except FileNotFoundError:
-        st.error("Error: 'model.pkl' not found. Please ensure the file is in the same directory as app.py.")
+    # Check for either filename just in case
+    if os.path.exists('model (1).pkl'):
+        model_path = 'model (1).pkl'
+    elif os.path.exists('model.pkl'):
+        model_path = 'model.pkl'
+    else:
         return None
+
+    with open(model_path, 'rb') as file:
+        model = pickle.load(file)
+    return model
 
 model = load_model()
 
-# App Header
-st.title("🎓 Student Exam Score Predictor")
-st.markdown("---")
-st.write("Enter the student's academic and lifestyle details below to predict their final exam score.")
+# 3. Sidebar for Inputs
+st.sidebar.header("⚙️ Input Parameters")
+st.sidebar.markdown("Adjust the student's metrics below:")
 
-# Create a clean two-column layout for inputs
-col1, col2 = st.columns(2)
+hours_studied = st.sidebar.number_input("Hours Studied (per day)", min_value=0.0, max_value=24.0, value=5.0, step=0.5)
+sleep_hours = st.sidebar.number_input("Sleep Hours (per night)", min_value=0.0, max_value=24.0, value=7.0, step=0.5)
+attendance_percent = st.sidebar.slider("Attendance Percentage (%)", min_value=0, max_value=100, value=85)
+previous_scores = st.sidebar.number_input("Previous Exam Score", min_value=0.0, max_value=100.0, value=75.0, step=1.0)
 
-with col1:
-    st.subheader("Study Metrics")
-    hours_studied = st.number_input("Hours Studied (per day)", min_value=0.0, max_value=24.0, value=5.0, step=0.5)
-    attendance_percent = st.slider("Attendance Percentage (%)", min_value=0, max_value=100, value=85)
+st.sidebar.markdown("---")
+predict_button = st.sidebar.button("Generate Prediction", type="primary", use_container_width=True)
 
-with col2:
-    st.subheader("Historical & Health Metrics")
-    previous_scores = st.number_input("Previous Exam Score", min_value=0.0, max_value=100.0, value=75.0, step=1.0)
-    sleep_hours = st.number_input("Sleep Hours (per night)", min_value=0.0, max_value=24.0, value=7.0, step=0.5)
+# 4. Main Dashboard UI
+st.title("📈 Student Performance Dashboard")
+st.markdown("This dashboard predicts a student's final exam score based on their study habits, attendance, and previous academic history.")
 
-st.markdown("---")
-
-# Prediction logic
-if st.button("Predict Exam Score", type="primary", use_container_width=True):
-    if model is not None:
-        # Construct the input DataFrame matching the exact feature names from the pickle file
-        input_data = pd.DataFrame({
-            'hours_studied': [hours_studied],
-            'sleep_hours': [sleep_hours],
-            'attendance_percent': [attendance_percent],
-            'previous_scores': [previous_scores]
-        })
-        
-        try:
-            # Generate prediction
-            prediction = model.predict(input_data)
-            predicted_score = prediction[0]
+if model is None:
+    st.error("🚨 **Model not found!** Please ensure `model.pkl` or `model (1).pkl` is in the same folder as this script.")
+else:
+    # 5. Prediction Logic
+    if predict_button:
+        with st.spinner("Analyzing data..."):
+            # Construct the input DataFrame matching the exact feature names
+            # 'exam_score' is included as a dummy variable (0.0) to bypass the training error[cite: 2]
+            input_data = pd.DataFrame({
+                'hours_studied': [hours_studied],
+                'sleep_hours': [sleep_hours],
+                'attendance_percent': [attendance_percent],
+                'previous_scores': [previous_scores],
+                'exam_score': [0.0]  
+            })
             
-            # Display result
-            st.success(f"### Predicted Exam Score: **{predicted_score:.2f}**")
-            
-        except ValueError as e:
-            # Fallback in case 'exam_score' was accidentally included as a training feature
-            st.error(f"Prediction Error: {e}")
-            if "expecting 5 features" in str(e).lower():
-                st.warning("⚠️ It looks like the model was trained with the target variable ('exam_score') as one of the input features. You will need to retrain the `model.pkl` file, ensuring 'exam_score' is dropped from the X (training) dataset.")
+            try:
+                # Generate prediction
+                prediction = model.predict(input_data)
+                predicted_score = float(prediction[0])
+                
+                # Calculate the difference from the previous score
+                score_delta = predicted_score - previous_scores
+                
+                st.markdown("### Prediction Results")
+                st.divider()
+                
+                # Display metrics in columns
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric(
+                        label="Predicted Exam Score", 
+                        value=f"{predicted_score:.1f}%", 
+                        delta=f"{score_delta:.1f}% vs Previous",
+                        delta_color="normal"
+                    )
+                with col2:
+                    st.metric(label="Attendance", value=f"{attendance_percent}%")
+                with col3:
+                    st.metric(label="Daily Study Hours", value=f"{hours_studied} hrs")
+                
+                # Visual Progress Bar for the score
+                st.write("")
+                st.write("**Score Projection Gauge:**")
+                # Ensure the progress bar doesn't break if the prediction goes slightly over 100
+                st.progress(min(int(predicted_score), 100))
+                
+                if predicted_score >= 80:
+                    st.success("✨ Excellent trajectory! The student is on track for a high grade.")
+                elif predicted_score >= 60:
+                    st.info("👍 Solid performance, but there is still room for improvement.")
+                else:
+                    st.warning("⚠️ The student is at risk of a low score. Consider increasing study hours or attendance.")
+                
+            except Exception as e:
+                st.error(f"Prediction Error: {e}")
+    else:
+        st.info("👈 Adjust the parameters in the sidebar and click **Generate Prediction** to see the results.")
